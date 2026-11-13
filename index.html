@@ -242,8 +242,46 @@ function requireAdminAccess(){if(historyAdminToken)return true;alert('Acción pr
 document.getElementById('unlockHistoryAdmin').onclick=async()=>{let key=document.getElementById('historyAdminToken').value.trim();if(!key){alert('Escribe ADMIN_TOKEN.');return}let endpoint=driveEndpointValue(),api=driveTokenValue(),status=document.getElementById('historyAdminStatus');if(!endpoint||!api){alert('Configura primero la conexión de Apps Script.');return}try{await requestCentralHistory(endpoint,api,key);historyAdminToken=key;historyAdminActor=document.getElementById('historyAdminActor').value.trim()||'Administrador';if(status)status.textContent='🔓 Administración desbloqueada. El catálogo puede modificarse desde este dispositivo.';await refreshCentralHistory();renderEquipment();renderClients();updateAdminControls()}catch(e){historyAdminToken='';if(status)status.textContent='Clave no válida o no fue posible validar el acceso: '+e.message;alert('No se habilitó el acceso administrativo. Verifica ADMIN_TOKEN.')}};
 document.getElementById('lockHistoryAdmin').onclick=()=>{historyAdminToken='';historyAdminActor='';document.getElementById('historyAdminToken').value='';document.getElementById('historyAdminStatus').textContent='🔒 Modo consulta. Catálogo protegido.';renderEquipment();renderClients();updateAdminControls();refreshCentralHistory()};
 function renderClients(){clientList.innerHTML=db.clients.map(c=>`<div class="listrow"><div><b>${esc(c.name)}</b><div class="small">${db.equipment.filter(e=>e.clientId===c.id).length} equipos · ${db.inspections.filter(x=>x.clientId===c.id).length} inspecciones · ${c.formatPending?"Formato pendiente":(c.active===false?"Inactivo":"Formato activo")}</div></div><button class="btn secondary" ${historyAdminToken?'':'disabled'} onclick="editClient('${c.id}')">Editar</button></div>`).join('')}
-function editClient(cid){if(!requireAdminAccess())return;let c=db.clients.find(x=>x.id===cid);if(!c)return;let name=prompt('Nombre del cliente:',c.name);if(name===null)return;c.name=name.trim()||c.name;c.email=prompt('Correo del cliente:',c.email||'')||'';c.phone=prompt('Teléfono:',c.phone||'')||'';persist()}
-newClient.onclick=()=>{if(!requireAdminAccess())return;let name=prompt('Nombre del nuevo cliente:');if(!name)return;let fields=prompt('Checklist inicial (escribe un criterio por línea). Déjalo vacío para usar el estándar:', 'Inspección visual');db.clients.push({id:id(),name:name.trim(),email:'',phone:'',checklist:(fields||'Inspección visual').split(/\\r?\\n/).map(x=>x.trim()).filter(Boolean),active:true});persist()}
+// Guarda cambios del catálogo sin reconstruir todas las tarjetas de equipos.
+// La versión anterior llamaba persist(), que ejecutaba refreshAll() y volvía a
+// renderizar cada activo del cliente actual; con catálogos grandes bloqueaba la UI.
+function persistClientCatalogChanges(){
+ localStorage.setItem(KEY,JSON.stringify(db));
+ fillClients();
+ fillFormatClients();
+ fillMasterClients();
+ renderClients();
+ document.getElementById('backupCount').textContent=db.inspections.length;
+ document.getElementById('backupEquipCount').textContent=db.equipment.length;
+}
+function normalizeClientName(value){return String(value||'').trim().replace(/\s+/g,' ')}
+function clientNameExists(name,exceptId=''){
+ const key=normalizeClientName(name).toLocaleLowerCase('es-MX');
+ return db.clients.some(x=>x.id!==exceptId&&normalizeClientName(x.name).toLocaleLowerCase('es-MX')===key);
+}
+function editClient(cid){
+ if(!requireAdminAccess())return;
+ let c=db.clients.find(x=>x.id===cid);if(!c)return;
+ let name=prompt('Nombre del cliente:',c.name);if(name===null)return;
+ name=normalizeClientName(name);
+ if(!name){alert('El nombre del cliente no puede quedar vacío.');return}
+ if(clientNameExists(name,c.id)){alert('Ya existe un cliente con ese nombre. Verifica el catálogo para evitar duplicados.');return}
+ let email=prompt('Correo del cliente:',c.email||'');if(email===null)return;
+ let phone=prompt('Teléfono:',c.phone||'');if(phone===null)return;
+ c.name=name;c.email=email.trim();c.phone=phone.trim();
+ persistClientCatalogChanges();
+}
+newClient.onclick=()=>{
+ if(!requireAdminAccess())return;
+ let name=prompt('Nombre del nuevo cliente:');if(name===null)return;
+ name=normalizeClientName(name);
+ if(!name){alert('Escribe el nombre del cliente.');return}
+ if(clientNameExists(name)){alert('Ya existe un cliente con ese nombre. No se creó un duplicado.');return}
+ let fields=prompt('Checklist inicial (escribe un criterio por línea). Déjalo vacío para usar el estándar:', 'Inspección visual');
+ if(fields===null)return;
+ db.clients.push({id:id(),name,email:'',phone:'',checklist:(fields||'Inspección visual').split(/\r?\n/).map(x=>x.trim()).filter(Boolean),active:true});
+ persistClientCatalogChanges();
+};
 
 formatClient.onchange=loadFormatEditor;
 saveFormat.onclick=()=>{if(!requireAdminAccess())return;let c=db.clients.find(x=>x.id===formatClient.value);if(!c)return;let fields=formatFields.value.split(/\\r?\\n/).map(x=>x.trim()).filter(Boolean);if(formatStatus.value==="active"&&!fields.length){alert("Agrega al menos un criterio o usa el checklist estándar.");return}c.checklist=fields.length?fields:["Inspección visual"];c.formatPending=formatStatus.value==="pending";c.active=formatStatus.value!=="inactive";persist();alert("Formato guardado. Se aplicará a las nuevas inspecciones; los registros anteriores conservarán su información.")};
